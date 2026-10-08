@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CloudCart — Observability Demo</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <div class="brand">☁️ CloudCart</div>
+  <div class="tag">AWS Observability Demo</div>
+</header>
+
+<main>
+  <section class="hero">
+    <div>
+      <p class="eyebrow">FROM TELEMETRY TO INTELLIGENCE</p>
+      <h1>Your dashboard is green.<br>Your users are still complaining.</h1>
+      <p class="subtitle">A deliberately small e-commerce application for demonstrating application telemetry, dependency visibility and AI-powered observability.</p>
+    </div>
+    <div class="status-card">
+      <span>Demo database latency</span>
+      <strong id="demoStatus">OFF</strong>
+      <button id="toggleLatency">Introduce latency</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Products</h2>
+    <div id="products" class="grid"></div>
+  </section>
+
+  <aside class="cart">
+    <h2>Cart</h2>
+    <div id="cartItems"></div>
+    <div class="total">Total: $<span id="total">0.00</span></div>
+    <input id="customerName" placeholder="Name" value="Demo Customer">
+    <input id="customerEmail" placeholder="Email" value="demo@example.com">
+    <button id="checkout">Checkout</button>
+    <p id="result"></p>
+  </aside>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

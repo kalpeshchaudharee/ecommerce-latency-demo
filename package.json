@@ -1,0 +1,27 @@
+{
+  "name": "aws-omni-ecommerce-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Full-stack e-commerce demo for AWS CloudWatch Omni and OpenTelemetry observability.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node -r ./otel.js server.js",
+    "dev": "node -r ./otel.js server.js",
+    "db:init": "node scripts/init-db.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-lambda": "^3.900.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.67.0",
+    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.208.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.208.0",
+    "@opentelemetry/resources": "^2.4.0",
+    "@opentelemetry/sdk-metrics": "^2.4.0",
+    "@opentelemetry/sdk-node": "^0.208.0",
+    "@opentelemetry/semantic-conventions": "^1.37.0",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "uuid": "^13.0.0"
+  }
+}
