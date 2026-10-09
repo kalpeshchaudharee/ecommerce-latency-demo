@@ -3,6 +3,7 @@
 require('dotenv').config();
 
 const express = require('express');
+const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 const { LambdaClient, InvokeCommand } = require('@aws-sdk/client-lambda');
@@ -11,11 +12,30 @@ const { randomUUID } = require('crypto');
 const app = express();
 const port = Number(process.env.PORT || 3000);
 
+const caPath = path.join(__dirname, 'global-bundle.pem');
+
+if (!fs.existsSync(caPath)) {
+  throw new Error(
+    `RDS CA certificate not found at ${caPath}. ` +
+    'Download global-bundle.pem into the application directory.'
+  );
+}
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: {
+    ca: fs.readFileSync(caPath, 'utf8'),
+    rejectUnauthorized: true
+  },
   max: 10,
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 5000
+});
+
+pool.on('error', (error) => {
+  logEvent('ERROR', 'unexpected PostgreSQL pool error', {
+    error: error.message
+  });
 });
 
 const lambda = new LambdaClient({
@@ -59,6 +79,13 @@ async function getPaymentAuthorization(orderId, amount) {
     });
 
     const response = await lambda.send(command);
+
+    if (response.FunctionError) {
+      throw new Error(
+        `Payment Lambda failed: ${response.FunctionError}`
+      );
+    }
+
     const payload = response.Payload
       ? JSON.parse(Buffer.from(response.Payload).toString())
       : {};
@@ -68,6 +95,7 @@ async function getPaymentAuthorization(orderId, amount) {
 
   // Local fallback.
   await new Promise(resolve => setTimeout(resolve, 40));
+
   return {
     authorized: true,
     transactionId: `local-${randomUUID()}`
@@ -77,13 +105,17 @@ async function getPaymentAuthorization(orderId, amount) {
 app.get('/api/health', async (req, res) => {
   try {
     const result = await pool.query('SELECT 1 AS ok');
+
     res.json({
       status: 'ok',
       database: result.rows[0].ok === 1,
       service: process.env.OTEL_SERVICE_NAME || 'ecommerce-web'
     });
   } catch (error) {
-    logEvent('ERROR', 'health check failed', { error: error.message });
+    logEvent('ERROR', 'health check failed', {
+      error: error.message
+    });
+
     res.status(503).json({ status: 'error' });
   }
 });
@@ -99,26 +131,38 @@ app.get('/api/products', async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    logEvent('ERROR', 'product listing failed', { error: error.message });
-    res.status(500).json({ error: 'Unable to load products' });
+    logEvent('ERROR', 'product listing failed', {
+      error: error.message
+    });
+
+    res.status(500).json({
+      error: 'Unable to load products'
+    });
   }
 });
 
 app.post('/api/orders', async (req, res) => {
-  const client = await pool.connect();
   const orderId = randomUUID();
   const { items, customer } = req.body;
+  let client;
 
   try {
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'Cart is empty' });
+      return res.status(400).json({
+        error: 'Cart is empty'
+      });
     }
+
+    client = await pool.connect();
 
     await client.query('BEGIN');
 
     const ids = items.map(item => Number(item.productId));
+
     const products = await client.query(
-      `SELECT id, name, price FROM products WHERE id = ANY($1::int[]) AND active = true`,
+      `SELECT id, name, price
+       FROM products
+       WHERE id = ANY($1::int[]) AND active = true`,
       [ids]
     );
 
@@ -126,7 +170,13 @@ app.post('/api/orders', async (req, res) => {
       throw new Error('One or more products are unavailable');
     }
 
-    const priceById = new Map(products.rows.map(p => [p.id, Number(p.price)]));
+    const priceById = new Map(
+      products.rows.map(product => [
+        product.id,
+        Number(product.price)
+      ])
+    );
+
     let total = 0;
 
     for (const item of items) {
@@ -140,11 +190,12 @@ app.post('/api/orders', async (req, res) => {
       throw new Error('Payment was declined');
     }
 
-    // Intentional demo delay occurs on the database path.
+    // Intentional database delay for the observability demo.
     await maybeDelayDatabase();
 
     await client.query(
-      `INSERT INTO orders (id, customer_name, customer_email, total_amount, payment_transaction_id)
+      `INSERT INTO orders
+       (id, customer_name, customer_email, total_amount, payment_transaction_id)
        VALUES ($1, $2, $3, $4, $5)`,
       [
         orderId,
@@ -157,8 +208,10 @@ app.post('/api/orders', async (req, res) => {
 
     for (const item of items) {
       const quantity = Math.max(1, Number(item.quantity || 1));
+
       await client.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+        `INSERT INTO order_items
+         (order_id, product_id, quantity, unit_price)
          VALUES ($1, $2, $3, $4)`,
         [
           orderId,
@@ -184,14 +237,22 @@ app.post('/api/orders', async (req, res) => {
       paymentTransactionId: payment.transactionId
     });
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
+    if (client) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+
     logEvent('ERROR', 'order failed', {
       order_id: orderId,
       error: error.message
     });
-    res.status(500).json({ error: error.message });
+
+    res.status(500).json({
+      error: error.message
+    });
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 });
 
@@ -203,7 +264,7 @@ app.get('/api/demo/status', (req, res) => {
 });
 
 app.post('/api/demo/failure', (req, res) => {
-  demoDbLatencyEnabled = Boolean(req.body.enabled);
+  demoDbLatencyEnabled = req.body.enabled === true;
 
   logEvent('WARN', 'demo database latency changed', {
     enabled: demoDbLatencyEnabled,
@@ -226,3 +287,15 @@ app.listen(port, () => {
     environment: process.env.NODE_ENV || 'development'
   });
 });
+
+async function shutdown() {
+  logEvent('INFO', 'shutting down ecommerce service');
+
+  await pool.end();
+  lambda.destroy();
+
+  process.exit(0);
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
